@@ -36,7 +36,7 @@ jobs:
       - name: Fetch and verify canonical BIP-39 list
         run: |
           curl -fsSLo puzzle-source/bip39_english.txt https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039/english.txt
-          echo '2f5eed53a4727b4bf8880d8f3f199efc90e585036d9ff8eff3a2ed3b24dbda  puzzle-source/bip39_english.txt' | sha256sum --check -
+          echo '2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda  puzzle-source/bip39_english.txt' | sha256sum --check -
       - name: Verify upstream enumerator and alternate paths
         run: python worker/run_guntis_alt_paths.py --mode selftest --source-root puzzle-source --wordlist puzzle-source/bip39_english.txt
 
@@ -87,7 +87,7 @@ jobs:
       - name: Fetch and verify canonical BIP-39 list
         run: |
           curl -fsSLo puzzle-source/bip39_english.txt https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039/english.txt
-          echo '2f5eed53a4727b4bf8880d8f3f199efc90e585036d9ff8eff3a2ed3b24dbda  puzzle-source/bip39_english.txt' | sha256sum --check -
+          echo '2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda  puzzle-source/bip39_english.txt' | sha256sum --check -
       - name: Selftest worker
         run: python worker/run_guntis_alt_paths.py --mode selftest --source-root puzzle-source --wordlist puzzle-source/bip39_english.txt
       - name: Search shard ${{ matrix.shard }}
