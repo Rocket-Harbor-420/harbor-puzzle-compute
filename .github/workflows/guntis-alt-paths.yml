@@ -1,0 +1,125 @@
+name: Guntis alternative-path puzzle workers
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run the differential check or the full 40-shard search
+        required: true
+        type: choice
+        options: [selftest, search]
+        default: selftest
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    if: ${{ inputs.mode == 'selftest' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: floflo777/open-crypto-puzzles
+          ref: 4c980f0707aecd915b908b5c751abd80e5d380f3
+          path: puzzle-source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned dependencies
+        run: python -m pip install --disable-pip-version-check coincurve==21.0.0 pycryptodome==3.23.0
+      - name: Fetch and verify canonical BIP-39 list
+        run: |
+          curl -fsSLo puzzle-source/bip39_english.txt https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039/english.txt
+          echo '2f5eed53a4727b4bf8880d8f3f199efc90e585036d9ff8eff3a2ed3b24dbda  puzzle-source/bip39_english.txt' | sha256sum --check -
+      - name: Verify upstream enumerator and alternate paths
+        run: python worker/run_guntis_alt_paths.py --mode selftest --source-root puzzle-source --wordlist puzzle-source/bip39_english.txt
+
+  preflight:
+    if: ${{ inputs.mode == 'search' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm puzzle target still has a balance
+        run: |
+          python - <<'PY'
+          import json, urllib.request
+          target = '0x9c2f44efad0c1e852a09df9939e6daf061140caf'
+          payload = json.dumps({'jsonrpc':'2.0','id':1,'method':'eth_getBalance','params':[target,'latest']}).encode()
+          req = urllib.request.Request('https://ethereum-rpc.publicnode.com', data=payload, headers={'content-type':'application/json'})
+          result = json.load(urllib.request.urlopen(req, timeout=20))
+          wei = int(result['result'], 16)
+          print(f'target={target} balance_wei={wei} balance_eth={wei/10**18:.18f}')
+          if wei == 0:
+              raise SystemExit('Target is empty; search stopped before compute.')
+          PY
+
+  search:
+    if: ${{ inputs.mode == 'search' }}
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: floflo777/open-crypto-puzzles
+          ref: 4c980f0707aecd915b908b5c751abd80e5d380f3
+          path: puzzle-source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned dependencies
+        run: python -m pip install --disable-pip-version-check coincurve==21.0.0 pycryptodome==3.23.0
+      - name: Fetch and verify canonical BIP-39 list
+        run: |
+          curl -fsSLo puzzle-source/bip39_english.txt https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039/english.txt
+          echo '2f5eed53a4727b4bf8880d8f3f199efc90e585036d9ff8eff3a2ed3b24dbda  puzzle-source/bip39_english.txt' | sha256sum --check -
+      - name: Selftest worker
+        run: python worker/run_guntis_alt_paths.py --mode selftest --source-root puzzle-source --wordlist puzzle-source/bip39_english.txt
+      - name: Search shard ${{ matrix.shard }}
+        run: python worker/run_guntis_alt_paths.py --mode search --shard ${{ matrix.shard }} --workers 2 --source-root puzzle-source --wordlist puzzle-source/bip39_english.txt --public-key config/operator-hit-public.pem
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shard-${{ matrix.shard }}
+          path: results/shard-${{ matrix.shard }}
+          if-no-files-found: ignore
+          retention-days: 90
+
+  summarize:
+    if: ${{ always() && inputs.mode == 'search' }}
+    needs: search
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: collected
+          merge-multiple: false
+      - name: Report shard coverage
+        run: |
+          python - <<'PY'
+          import glob, json, pathlib
+          files = sorted(glob.glob('collected/**/summary.json', recursive=True))
+          rows = [json.loads(pathlib.Path(p).read_text()) for p in files]
+          print(json.dumps({'completed_shards':len(rows),'expected_shards':40,
+            'arrangements':sum(r['arrangements'] for r in rows),
+            'checksum_valid_candidates':sum(r['checksum_valid_candidates'] for r in rows),
+            'hits':[{'shard':r['shard'],'path':r['path']} for r in rows if r['found']]}, indent=2))
+          if len(rows) != 40:
+            raise SystemExit('Incomplete search: missing shard summaries.')
+          PY
